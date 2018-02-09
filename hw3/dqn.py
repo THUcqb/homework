@@ -3,12 +3,14 @@ import gym.spaces
 import itertools
 import numpy as np
 import random
-import tensorflow                as tf
+import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from collections import namedtuple
 from dqn_utils import *
 
-OptimizerSpec = namedtuple("OptimizerSpec", ["constructor", "kwargs", "lr_schedule"])
+OptimizerSpec = namedtuple(
+    "OptimizerSpec", ["constructor", "kwargs", "lr_schedule"])
+
 
 def learn(env,
           q_func,
@@ -75,7 +77,7 @@ def learn(env,
         If not None gradients' norms are clipped to this value.
     """
     assert type(env.observation_space) == gym.spaces.Box
-    assert type(env.action_space)      == gym.spaces.Discrete
+    assert type(env.action_space) == gym.spaces.Discrete
 
     ###############
     # BUILD MODEL #
@@ -91,22 +93,22 @@ def learn(env,
 
     # set up placeholders
     # placeholder for current observation (or state)
-    obs_t_ph              = tf.placeholder(tf.uint8, [None] + list(input_shape))
+    obs_t_ph = tf.placeholder(tf.uint8, [None] + list(input_shape))
     # placeholder for current action
-    act_t_ph              = tf.placeholder(tf.int32,   [None])
+    act_t_ph = tf.placeholder(tf.int32, [None])
     # placeholder for current reward
-    rew_t_ph              = tf.placeholder(tf.float32, [None])
+    rew_t_ph = tf.placeholder(tf.float32, [None])
     # placeholder for next observation (or state)
-    obs_tp1_ph            = tf.placeholder(tf.uint8, [None] + list(input_shape))
+    obs_tp1_ph = tf.placeholder(tf.uint8, [None] + list(input_shape))
     # placeholder for end of episode mask
     # this value is 1 if the next state corresponds to the end of an episode,
     # in which case there is no Q-value at the next state; at the end of an
     # episode, only the current state reward contributes to the target, not the
     # next state Q-value (i.e. target is just rew_t_ph, not rew_t_ph + gamma * q_tp1)
-    done_mask_ph          = tf.placeholder(tf.float32, [None])
+    done_mask_ph = tf.placeholder(tf.float32, [None])
 
     # casting to float on GPU ensures lower data transfer times.
-    obs_t_float   = tf.cast(obs_t_ph,   tf.float32) / 255.0
+    obs_t_float = tf.cast(obs_t_ph,   tf.float32) / 255.0
     obs_tp1_float = tf.cast(obs_tp1_ph, tf.float32) / 255.0
 
     # Here, you should fill in your own code to compute the Bellman error. This requires
@@ -126,16 +128,31 @@ def learn(env,
     # q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='q_func')
     # Older versions of TensorFlow may require using "VARIABLES" instead of "GLOBAL_VARIABLES"
     ######
-    
-    # YOUR CODE HERE
+
+    # LHS
+    q = q_func(obs_t_float, num_actions, scope="q_func", reuse=False)
+    q_func_vars = tf.get_collection(
+        tf.GraphKeys.GLOBAL_VARIABLES, scope="q_func")
+    # RHS (bootstrapping) using target q to mitigate the max noise problem
+    target_q = q_func(obs_tp1_float, num_actions,
+                      scope="target_q_func", reuse=False)
+    target_q_func_vars = tf.get_collection(
+        tf.GraphKeys.GLOBAL_VARIABLES, scope="target_q_func")
+    # Choose the corresponding q value of the action
+    q_act = tf.reduce_sum(q * tf.one_hot(act_t_ph, num_actions), axis=1)
+    q_look_ahead = rew_t_ph + (1 - done_mask_ph) * \
+        gamma * tf.reduce_max(target_q, axis=1)
+    # Bellman error
+    total_error = tf.nn.l2_loss(q_act - q_look_ahead) / batch_size
 
     ######
 
     # construct optimization op (with gradient clipping)
     learning_rate = tf.placeholder(tf.float32, (), name="learning_rate")
-    optimizer = optimizer_spec.constructor(learning_rate=learning_rate, **optimizer_spec.kwargs)
+    optimizer = optimizer_spec.constructor(
+        learning_rate=learning_rate, **optimizer_spec.kwargs)
     train_fn = minimize_and_clip(optimizer, total_error,
-                 var_list=q_func_vars, clip_val=grad_norm_clipping)
+                                 var_list=q_func_vars, clip_val=grad_norm_clipping)
 
     # update_target_fn will be called periodically to copy Q network to target Q network
     update_target_fn = []
@@ -152,17 +169,17 @@ def learn(env,
     ###############
     model_initialized = False
     num_param_updates = 0
-    mean_episode_reward      = -float('nan')
+    mean_episode_reward = -float('nan')
     best_mean_episode_reward = -float('inf')
     last_obs = env.reset()
     LOG_EVERY_N_STEPS = 10000
 
     for t in itertools.count():
-        ### 1. Check stopping criterion
+        # 1. Check stopping criterion
         if stopping_criterion is not None and stopping_criterion(env, t):
             break
 
-        ### 2. Step the env and store the transition
+        # 2. Step the env and store the transition
         # At this point, "last_obs" contains the latest observation that was
         # recorded from the simulator. Here, your code needs to store this
         # observation and its outcome (reward, next observation, etc.) into
@@ -193,8 +210,22 @@ def learn(env,
         # might as well be random, since you haven't trained your net...)
 
         #####
-        
-        # YOUR CODE HERE
+
+        ret = replay_buffer.store_frame(last_obs)
+        eps = exploration.value(t)
+
+        if np.random.random() >= eps and model_initialized:
+            recent_obs = np.expand_dims(
+                replay_buffer.encode_recent_observation(), axis=0)
+            q_values = session.run(q, feed_dict={obs_t_ph: recent_obs})
+            action = np.argmax(np.squeeze(q_values))
+        else:
+            action = np.random.choice(num_actions)
+
+        last_obs, reward, done, info = env.step(action)
+        if done:
+            last_obs = env.reset()
+        replay_buffer.store_effect(ret, action, reward, done)
 
         #####
 
@@ -202,7 +233,7 @@ def learn(env,
         # reset if done was true), and last_obs should point to the new latest
         # observation
 
-        ### 3. Perform experience replay and train the network.
+        # 3. Perform experience replay and train the network.
         # note that this is only done if the replay buffer contains enough samples
         # for us to learn something useful -- until then, the model will not be
         # initialized and random actions should be taken
@@ -243,17 +274,42 @@ def learn(env,
             # you should update every target_update_freq steps, and you may find the
             # variable num_param_updates useful for this (it was initialized to 0)
             #####
-            
-            # YOUR CODE HERE
+
+            # a
+            obs_t_batch, act_t_batch, rew_t_batch, obs_tp1_batch, done_mask = \
+                replay_buffer.sample(batch_size)
+
+            # b
+            if not model_initialized:
+                initialize_interdependent_variables(
+                    session, tf.global_variables())
+                model_initialized = True
+
+            # c
+            session.run(train_fn, {
+                obs_t_ph: obs_t_batch,
+                act_t_ph: act_t_batch,
+                rew_t_ph: rew_t_batch,
+                obs_tp1_ph: obs_tp1_batch,
+                done_mask_ph: done_mask,
+                learning_rate: optimizer_spec.lr_schedule.value(t)
+            })
+            num_param_updates += 1
+
+            # d
+            if num_param_updates % target_update_freq == 0:
+                session.run(update_target_fn)
 
             #####
 
-        ### 4. Log progress
-        episode_rewards = get_wrapper_by_name(env, "Monitor").get_episode_rewards()
+        # 4. Log progress
+        episode_rewards = get_wrapper_by_name(
+            env, "Monitor").get_episode_rewards()
         if len(episode_rewards) > 0:
             mean_episode_reward = np.mean(episode_rewards[-100:])
         if len(episode_rewards) > 100:
-            best_mean_episode_reward = max(best_mean_episode_reward, mean_episode_reward)
+            best_mean_episode_reward = max(
+                best_mean_episode_reward, mean_episode_reward)
         if t % LOG_EVERY_N_STEPS == 0 and model_initialized:
             print("Timestep %d" % (t,))
             print("mean reward (100 episodes) %f" % mean_episode_reward)
