@@ -148,7 +148,7 @@ def minimize_and_clip(optimizer, objective, var_list, clip_val=10):
     return optimizer.apply_gradients(gradients)
 
 
-def initialize_interdependent_variables(session, vars_list, feed_dict):
+def initialize_interdependent_variables(session, vars_list):
     """Initialize a list of variables one at a time, which is useful if
     initialization of some variables depends on initialization of the others.
     """
@@ -159,8 +159,8 @@ def initialize_interdependent_variables(session, vars_list, feed_dict):
             try:
                 # If using an older version of TensorFlow, uncomment the line
                 # below and comment out the line after it.
-                #session.run(tf.initialize_variables([v]), feed_dict)
-                session.run(tf.variables_initializer([v]), feed_dict)
+                #session.run(tf.initialize_variables([v]))
+                session.run(tf.variables_initializer([v]))
             except tf.errors.FailedPreconditionError:
                 new_vars_left.append(v)
         if len(new_vars_left) >= len(vars_left):
